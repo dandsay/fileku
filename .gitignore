@@ -1,0 +1,28 @@
+# Binary hasil build — bangun sendiri dari fileku.go, jangan commit.
+# Pola dibatasi ke root (awalan /) agar folder .agents/skills/fileku/ tidak ikut ke-ignore.
+/fileku
+/fileku.exe
+/fileku-test
+smoke.txt
+smoke.txt.enc
+
+# KUNCI DAN DATA — JANGAN PERNAH MASUK REPO.
+# Bocornya kunci = bocornya semua file.
+kunci.key
+*.key
+*.enc
+*.dec
+
+# Data pribadi umum.
+*.vid
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.jpg
+*.jpeg
+*.png
+*.heic
+*.webp
+*.bak
+*.sha
