@@ -1,19 +1,14 @@
-# Fileku v1 — Kunci & Gembok (BEKU/FROZEN)
+# Fileku v1.1.0 — Kunci & Gembok (BEKU/FROZEN) ❄️
 
 > by **dandsay** — ⭐ https://github.com/dandsay/fileku
-> Satu modul Go kecil (stdlib-only, tanpa dependensi) untuk mengunci (enkripsi)
-> dan membuka (dekripsi) foto/video. Satu binary = kunci + gembok. Windows & Linux.
-> Banner CLI menampilkan kredit + logo GitHub ASCII ini.
+> Modul Go kecil (stdlib-only, tanpa dependensi eksternal) untuk mengunci (enkripsi)
+> dan membuka (dekripsi) file. Satu binary = kunci + gembok. Linux & Windows.
 
-> **STATUS: READER v1 BEKU + WRITER v2 AKTIF.** File `.enc` lama (`LCK1`)
-> tetap bisa dibuka. File baru ditulis sebagai `LCK2`: nama file+ekstensi
-> asli disimpan **terenkripsi (AES-GCM)** di header, nama output **acak heks**.
-> Satu byte parameter kripto berubah = file lama tidak bisa dibuka.
-> README ini adalah spesifikasi rekonstruksi: selama memegang **passphrase**,
-> program ini (atau implementasi ulang dari spec ini) bisa membuka kembali
-> semua file.
+> **STATUS: ARSITEKTUR BEKU.** Parameter §4 dan perilaku §5 DILARANG diubah tanpa
+> diskusi — satu byte berubah = file `.enc` lama tidak bisa dibuka. Verifikasi
+> dengan `bash scripts/check-freeze.sh` (dibandingkan ke `freeze.manifest.json`).
 
-## Pull + pasang sekali jalan
+## 1. Pull + pasang sekali jalan
 
 ```bash
 git clone https://github.com/dandsay/fileku.git
@@ -23,106 +18,147 @@ bash scripts/install.sh
 ./fileku --help
 ```
 
-Untuk AI agent: cukup baca `AGENTS.md` lalu jalankan runbook di sana
-(`bash scripts/install.sh`). Skill agent: `.agents/skills/fileku/SKILL.md`.
+Untuk AI agent: baca `AGENTS.md` lalu jalankan runbook di sana.
+Skill agent: `.agents/skills/fileku/SKILL.md`.
 
-## Cara pakai
+## 2. Cara pakai
 
 ```
-./fileku            # Linux (chmod +x fileku dulu)
-fileku.exe          # Windows (double-click)
-./fileku --version  # tampilkan versi + kredit dandsay
-./fileku --help     # bantuan + link GitHub
+./fileku            # menu interaktif (Linux: chmod +x dulu; Windows: double-click)
+./fileku --version  # versi + kredit
+./fileku --help     # bantuan
 ```
 
-Menu angka:
-
-| Angka | Fungsi |
-|-------|--------|
-| 1 | Kunci 1 file |
-| 2 | Buka 1 file (`.enc`) |
+| Menu | Fungsi |
+|------|--------|
+| 1 | Kunci 1 file → output `<32 hex acak>.enc`, nama asli terenkripsi di header |
+| 2 | Buka 1 file `.enc` → nama+ekstensi asli pulih otomatis |
 | 3 | Kunci SEMUA file (folder, rekursif) |
 | 4 | Buka SEMUA `.enc` (folder, rekursif) |
-| 5 | Buat file kunci baru (ketik passphrase / acak kamus) |
+| 5 | Buat `kunci.key` (passphrase ≥12 char / dadu-kata) → **backup ke 2 tempat** |
 | 0 | Keluar |
 
-Alur pertama kali: **menu 5** → pilih `[1]` ketik passphrase sendiri (min 12
-karakter) atau `[2]` acak dari kamus → simpan `kunci.key` → **backup ke
-minimal 2 tempat** → baru kunci via menu 1/3.
+Mode non-interaktif: `./fileku <path> [lock|unlock] [path-kunci]`.
 
-Mode non-interaktif (script):
+## 3. Pengaman
 
-```
-./fileku <path-file-atau-folder> [lock|unlock] [path-kunci]
-```
-
-Catatan v2: hasil kunci bernama **acak** (`<32 hex>.enc`) di folder yang sama;
-nama+ekstensi asli pulih otomatis saat dibuka (termasuk spasi dan tanpa ekstensi).
-
-## Pengaman (diringkas dari implementasi)
-
-1. **Jail folder software.** Hanya path DI DALAM folder tempat binary berada
-   yang bisa diproses (rekursif ke subfolder boleh). Path luar DITOLAK.
-2. **Anti double-enkripsi.** File `.enc` tidak bisa dikunci ulang; output yang
-   sudah ada di-SKIP (tidak ditimpa) pada mode folder.
-3. **File kunci tidak pernah ikut terkunci** (auto-skip + penolakan langsung).
+1. **Jail folder.** Hanya path di dalam folder binary yang diproses; path luar DITOLAK.
+2. **Anti double-enkripsi.** File `.enc` tidak bisa dikunci ulang.
+3. **`kunci.key` dan binary/source tidak pernah ikut terkunci** (skip eksplisit).
 4. File asli dihapus HANYA setelah sukses; output setengah jadi dihapus saat gagal.
-5. Binary di root/home butuh konfirmasi ekstra (`SAYA PAHAM`) untuk kunci massal.
+5. Folder berisiko (root/home) butuh konfirmasi ekstra untuk kunci massal.
 
-## Build dari source
+## 4. Spesifikasi format (BEKU)
+
+Semua bilangan bulat = big-endian. Reader menerima `LCK1` (legacy, nama = strip
+`.enc`) dan `LCK2`. Writer selalu `LCK2`.
+
+### 4.1 Tata byte `LCK2`
+
+| Offset | Ukuran | Isi |
+|--------|--------|-----|
+| 0 | 4 | magic `"LCK2"` |
+| 4 | 16 | salt per-file (`crypto/rand`) |
+| 20 | 12 | nonce header nama (acak) |
+| 32 | 2 | panjang ciphertext nama (`uint16` BE) |
+| 34 | variabel | `ct_nama = AES-256-GCM(kunci_file, basename_utf8)` — basename **lengkap termasuk ekstensi**, maks 1024 byte plaintext |
+| 34+n | per chunk | `nonce 12B acak` + `panjang_ct uint32 BE` + `ciphertext` (plaintext 1 MiB + tag GCM 16 B) |
+
+Output di filesystem: `<heks acak 16 byte>.enc` di folder yang sama dengan file
+asal. Nama acak menutupi nama/ekstensi; jumlah dan ukuran file tidak disembunyikan.
+
+### 4.2 Rantai kunci (BEKU)
+
+```
+kunci.key (32 byte)
+  ← PBKDF2-HMAC-SHA256(passphrase_utf8, salt="locker-kunci-v1", iter=200000)  [sekali, saat menu 5]
+  ← atau 32 byte acak langsung (kunci impor) — loader hanya cek panjang tepat 32
+
+kunci_file = PBKDF2-HMAC-SHA256(kunci.key, salt_file, iter=100000)            [per file]
+chunk_i    = AES-256-GCM(kunci_file, nonce_acak_12B, plaintext_≤1MiB)         [per chunk]
+```
+
+Passphrase dipakai **literal UTF-8** (hanya `\r`/`\n` akhir dibuang; spasi
+awal/akhir = bagian passphrase). Salt acak per file → file identik menghasilkan
+`.enc` berbeda. Gagal dekripsi = kunci salah ATAU file rusak/dimodifikasi
+(otentikasi GCM per chunk dan per nama).
+
+### 4.3 Parameter beku (ada di `freeze.manifest.json`)
+
+`magic`, `saltSize=16`, `nonceSize=12`, `chunkSize=1MiB`, `pbkdfIter=100000`,
+`keyDeriveSalt="locker-kunci-v1"`, `keyDeriveIter=200000`, `keySize=32`,
+`nameMaxPlain=1024`, layout header §4.1, derivasi tunggal saat buka (§5.3).
+
+## 5. Arsitektur internal
+
+```
+main.go   → banner, menu 0-5, prompt path, dispatch
+batch.go  → runSingleMode / runBatchMode (scan rekursif, konfirmasi, ringkasan)
+key.go    → loadKeyFile (tepat 32 B) / createKeyFile / kamus 1091 kata (~131 bit per 13 kata)
+jail.go   → getBaseDir, withinJail, randomEncPath, sanitizeRestoreName
+crypto.go → KDF, header LCK2, chunk serial + paralel, single-KDF unlock
+util.go   → progres, jeda
+```
+
+### 5.1 Paralelisme chunk
+
+File >4 MiB: pool worker ≤8 (sejumlah CPU), tiap worker membangun GCM sendiri
+dari kunci file yang sama (tanpa objek cipher lintas-goroutine), nonce tetap
+acak per chunk, **tulis dipertahankan berurutan** — output byte-kompatibel
+dengan jalur serial (terbukti: enkripsi-paralel ↔ dekripsi-serial checksum identik).
+File ≤4 MiB selalu serial (overhead goroutine tak sepadan).
+`FILEKU_JOBS=1` memaksa serial (irit CPU / pembanding).
+
+### 5.2 Penggabungan tulis
+
+Tiap chunk ditulis dalam **1x syscall** (`nonce+len+ct` digabung via `writeChunk`),
+bukan 3x. Isi byte identik — yang dipangkas hanya overhead syscall.
+
+### 5.3 Single-KDF unlock
+
+Buka tidak menderivasi dua kali: `peekUnlockTarget` (baca header nama) mewariskan
+kunci file hasil derivasinya ke `decryptFileAuto`. Kunci salah tetap ditolak dini
+di header, `.enc` tidak tersentuh. Hemat terukur 1x PBKDF2-100k per file (§7).
+
+### 5.4 Batasan yang disadari (bukan bug, keputusan desain)
+
+- Passphrase terlihat saat diketik (tanpa hidden prompt).
+- Tanpa `mlock`/`memzero`: kunci hidup di RAM selama proses berjalan.
+- PBKDF2 bukan memory-hard (lebih hemat diserang GPU/ASIC dibanding Argon2 —
+  ditukar dengan stdlib-only tanpa dependensi).
+- Ukuran/jumlah file dan waktu modifikasi tidak disembunyikan.
+
+## 6. Build dari source
 
 ```
 bash scripts/install.sh
-# atau manual (modul kecil, tanpa dependensi):
+# atau manual:
 go build -o fileku .
 GOOS=windows GOARCH=amd64 go build -o fileku.exe .
 ```
 
-Butuh Go 1.21+.
+Butuh Go 1.21+. `go.mod` minimal, tanpa dependensi eksternal.
 
-Catatan kinerja: file >4 MiB dienkripsi/didekripsi paralel (maks 8 worker,
-urutan tulis tetap berurutan sehingga format byte-kompatibel). `FILEKU_JOBS=1`
-memaksa mode serial (irit CPU / pembanding).
+## 7. Kinerja terukur (mesin dev 8 CPU, AES-NI)
 
-## Yang TIDAK BOLEH masuk repo
+| Uji | Hasil |
+|-----|-------|
+| 100 × 5 MB kunci (serial lama) | 7.3–9.1 dtk |
+| 100 × 5 MB kunci (paralel) | 7.6–8.2 dtk |
+| 100 × 5 MB buka (derivasi ganda) | ~22.3 dtk |
+| 100 × 5 MB buka (single-KDF) | **~11.2 dtk (2x)** |
+| 1 × 128 MB | ~0.27 dtk (~480 MB/dtk) |
+| 1 × 5 MB | kunci 184 ms / buka 175 ms |
 
-`kunci.key`, `*.key`, `*.enc`, data pribadi, dan binary hasil build.
-Sudah ditutup via `.gitignore`. **Bocornya `kunci.key` = bocornya semua file.**
+Catatan metodologi: kunci dan buka diukur terpisah dengan jeda agar flush disk
+settle (`Dirty≈0` sebelum timer); checksum SHA-256 100/100 OK di semua run.
+Fase kedua dalam satu sesi terukur lebih lambat (thermal laptop + backlog I/O),
+jadi angka buka vs kunci tidak apple-to-apple antar-fase — yang dibandingkan
+adalah antar-versi dalam fase yang sama. Kesimpulan: paralelisme chunk tidak
+menggerakkan angka batch kecil (dominan = PBKDF2 per-file + disk); single-KDF
+yang memberi gain 2x pada buka.
 
-## Spesifikasi format (v1 reader beku, v2 writer aktif)
-
-v1 (`LCK1`, hanya dibaca): `[magic LCK1][salt 16B][chunk*]` sesuai tabel 2–8
-di bawah. v2 (`LCK2`, ditulis baru): header nama terenkripsi disisipkan
-setelah salt, lalu chunk identik dengan v1.
-
-| # | Komponen | Nilai |
-|---|----------|-------|
-| 0 | Magic v2 | 4 byte ASCII `LCK2` (writer). Reader menerima `LCK1` dan `LCK2` |
-| 0b | Header nama v2 | `nonce 12B acak` + `panjang_ct uint16 BE` + `ct(nama)`; `nama` = basename UTF-8 lengkap **termasuk ekstensi** (maks 1024 byte), dienkripsi AES-256-GCM dengan kunci file yang sama; output `.enc` = heks acak 16 byte |
-| 1 | Kunci dari passphrase | `PBKDF2-HMAC-SHA256(passphrase_utf8, salt="locker-kunci-v1", iter=200000, dkLen=32)` |
-
-| # | Komponen | Nilai beku |
-|---|----------|------------|
-| 1 | Kunci dari passphrase | `PBKDF2-HMAC-SHA256(passphrase_utf8, salt="locker-kunci-v1", iter=200000, dkLen=32)` |
-| 2 | Magic header | 4 byte ASCII `LCK1` |
-| 3 | Salt per-file | 16 byte acak (`crypto/rand`), ditulis setelah magic |
-| 4 | Kunci file | `PBKDF2-HMAC-SHA256(kunci_langkah1, salt_file, iter=100000, dkLen=32)` → AES-256 |
-| 5 | Potongan data | plaintext dipotong **1 MiB** (`1048576` byte), potongan terakhir boleh pendek |
-| 6 | Per potongan | `nonce 12 byte acak` + `panjang_ciphertext uint32 BE` + `ciphertext` |
-| 7 | Cipher | **AES-256-GCM**, nonce 12 byte, tanpa additional data |
-| 8 | Output kunci | input + `.enc`. Output buka = input tanpa `.enc` |
-| 9 | Kamus dadu-kata | 1091 kata (a-z, 3–12 huruf, unik, di-`init`-validasi). Passphrase = kata digabung `-`. Minimal kata = `ceil(128 / log2(1091))` = **13 kata (±131 bit)** |
-
-Semua bilangan bulat = big-endian. Semua byte dibaca/ditulis apa adanya.
-
-Catatan rekonstruksi yang kritis:
-
-- Passphrase di-encode **UTF-8** dan dipakai **literal**: hanya `\r`/`\n` akhir
-  yang dibuang saat input. **Spasi di awal/akhir adalah bagian passphrase.**
-- Salt file acak per file → dua file sama menghasilkan `.enc` berbeda. Normal.
-- Gagal dekripsi = passphrase salah ATAU file rusak/dimodifikasi (GCM otentikasi).
-
-## Contoh dekriptor rujukan (Python 3, butuh `pip install cryptography`)
+## 8. Contoh dekriptor rujukan (Python 3, `pip install cryptography`)
 
 ```python
 import hashlib, struct, sys
@@ -147,43 +183,32 @@ def buka(enc_path: str, out_path: str, passphrase: str):
                 o.write(aes.decrypt(nonce, f.read(ln), None))
 
 buka(sys.argv[1], sys.argv[2], sys.argv[3])
-# pakai: python3 buka.py foto.jpg.enc foto.jpg "passphrase-kamu"
+# Catatan: dekriptor ini untuk LCK1. LCK2 diawali header nama (§4.1) yang
+# harus dilewati/didekripsi dulu sebelum chunk.
 ```
 
-## Struktur repo
+## 9. Struktur repo
 
 ```
 fileku/
-  main.go                  # titik masuk: banner, menu, alur prompt
-  crypto.go                # AES-256-GCM streaming (writer LCK2, reader LCK1+LCK2)
-  key.go                   # file kunci 32 byte + kamus dadu-kata 1091 kata
-  jail.go                  # jail folder, nama acak, sanitasi nama pulihan
-  batch.go                 # mode file tunggal & folder rekursif
-  util.go                  # progres + jeda CLI
-  go.mod                   # modul minimal (tanpa dependensi eksternal)
-  README.md                # file ini (spesifikasi + cara install)
-  LICENSE                  # MIT © 2026 dandsay
-  AGENTS.md                # runbook buat AI: suruh install/build dari sini
-  .gitignore               # menutup kunci, data, dan binary
-  scripts/
-    install.sh             # pull -> pasang sekali jalan (Linux + Windows)
-    build.sh               # build cepat + gofmt check
-  .agents/
-    skills/fileku/SKILL.md # skill agent: install, pakai, aturan beku
+  main.go crypto.go key.go jail.go batch.go util.go
+  go.mod                     # modul minimal (tanpa dependensi eksternal)
+  freeze.manifest.json       # hash source + parameter beku (§4.3)
+  README.md AGENTS.md LICENSE .gitignore
+  scripts/install.sh build.sh check-freeze.sh
+  .agents/skills/fileku/SKILL.md
 ```
 
-Riwayat keputusan desain: password awalnya hardcode di binary → dipindah ke
-file kunci 32 byte → kunci deterministik dari passphrase (bisa dibuat ulang)
-→ kamus native 1091 kata untuk passphrase dadu-kata ≥ 128 bit.
+Riwayat desain: password hardcode di binary → file kunci 32 byte → kunci
+deterministik dari passphrase → kamus 1091 kata → nama acak terenkripsi (LCK2) →
+chunk paralel + tulis-gabung → single-KDF unlock → pecah multi-file → **BEKU**.
 
-## Lisensi + kredit
+## 10. Lisensi + kredit
 
-MIT © 2026 **dandsay** — lihat `LICENSE`.
-
-Memakai / mem-fork? Pertahankan kredit:
+MIT © 2026 **dandsay** — lihat `LICENSE`. Memakai/mem-fork? Pertahankan:
 
 ```
 Credit: dandsay — https://github.com/dandsay/fileku
 ```
 
-Banner CLI (`./fileku --version`) juga menampilkan kredit ini.
+Banner CLI (`./fileku --version`) menampilkan kredit ini.

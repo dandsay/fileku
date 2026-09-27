@@ -40,7 +40,7 @@ Syarat: Go 1.21+, modul minimal, tanpa dependensi eksternal.
 
 Alur pertama: menu `5` → passphrase (≥12 char) / dadu-kata → `kunci.key` → backup 2 tempat → kunci via menu 1/3.
 
-## Aturan beku (jangan dilanggar)
+## Aturan beku (jangan dilanggar — lihat README §4 + freeze.manifest.json)
 
 - Writer `LCK2`: output heks acak 16 byte + header nama terenkripsi
   (`nonce 12B` + `len uint16 BE` + `ct(basename)`). Reader menerima `LCK1` + `LCK2`.

@@ -1,0 +1,26 @@
+{
+  "version": "v1.1.0",
+  "status": "FROZEN",
+  "repo": "https://github.com/dandsay/fileku",
+  "frozen_params": {
+    "magic_v1": "LCK1",
+    "magic_v2": "LCK2",
+    "saltSize": 16,
+    "nonceSize": 12,
+    "chunkSize": 1048576,
+    "pbkdfIter": 100000,
+    "keyDeriveSalt": "locker-kunci-v1",
+    "keyDeriveIter": 200000,
+    "keySize": 32,
+    "nameMaxPlain": 1024
+  },
+  "files": {
+    "main.go": "4a5e445539c1e69b0464862c54a5702fc3fe765749d14cca2a330a594f177462",
+    "crypto.go": "9bf4c0ad3fb50d04a33c6753af75d9309c88e0aab5c320bf80ba54b908a77019",
+    "key.go": "655a7dba4f864c9bac1c78b1675fe79490ff5635ebfe1648c5f3166a5754f7d2",
+    "jail.go": "2024f381471ebfa14fc46e0c6d01081201ecf939ae6e2a8d73fde416d3a6cc46",
+    "batch.go": "80d637968d47737137cee1a55e997d63cc4eab481da118192b867f5be65656b9",
+    "util.go": "769152ac8567bc99d2d1a354fe791140d1094cc11f4ee7583651e3209855cf27",
+    "go.mod": "48f0a9c75583ec88325822862440dbe19671c22216e39f5283c35df84dd2d57a"
+  }
+}

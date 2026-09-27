@@ -1,7 +1,8 @@
 # AGENTS.md — Instruksi untuk AI Agent (Fileku v1)
 
-> Repo: https://github.com/dandsay/fileku — by **dandsay**.
+> Repo: https://github.com/dandsay/fileku — by **dandsay**. Status: **BEKU ❄️**
 > Kalau user menyuruh "pasang / install fileku", ikuti runbook ini tanpa bertanya lagi kecuali ada yang gagal.
+> DILARANG mengubah `*.go` / parameter §4 README tanpa diskusi — cek dulu `bash scripts/check-freeze.sh`.
 
 ## 1. Apa ini?
 - Modul Go kecil (`main/crypto/key/jail/batch/util.go`, satu `package main`,

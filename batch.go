@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 func runSingleMode(path string, fi os.FileInfo, reader *bufio.Reader, modeArg, base string, interactive bool, key []byte, keyAbs string) bool {
@@ -339,6 +340,7 @@ func runBatchMode(root string, reader *bufio.Reader, modeArg, base string, key [
 		}
 		var ok, skip, fail int
 		var failed []string
+		t0 := time.Now()
 		for i, c := range cands {
 			fmt.Printf("[%d/%d] %s\n", i+1, len(cands), c.path)
 			out, rerr := randomEncPath(filepath.Dir(c.path))
@@ -363,7 +365,7 @@ func runBatchMode(root string, reader *bufio.Reader, modeArg, base string, key [
 			fmt.Println("  OK")
 			ok++
 		}
-		printBatchSummary(ok, skip, fail, failed)
+		printBatchSummary(ok, skip, fail, failed, time.Since(t0))
 		return true
 	}
 
@@ -380,6 +382,7 @@ func runBatchMode(root string, reader *bufio.Reader, modeArg, base string, key [
 	}
 	var ok, skip, fail int
 	var failed []string
+	t0 := time.Now()
 	for i, p := range enc {
 		var sz int64
 		if fi, serr := os.Stat(p); serr == nil {
@@ -413,13 +416,21 @@ func runBatchMode(root string, reader *bufio.Reader, modeArg, base string, key [
 		fmt.Println("  OK")
 		ok++
 	}
-	printBatchSummary(ok, skip, fail, failed)
+	printBatchSummary(ok, skip, fail, failed, time.Since(t0))
 	return true
 }
 
-func printBatchSummary(ok, skip, fail int, failed []string) {
+func fmtDur(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%.1f dtk", d.Seconds())
+	}
+	m := int(d.Minutes())
+	return fmt.Sprintf("%d mnt %d dtk", m, int(d.Seconds())%60)
+}
+
+func printBatchSummary(ok, skip, fail int, failed []string, elapsed time.Duration) {
 	fmt.Println()
-	fmt.Printf("SELESAI. OK=%d SKIP=%d GAGAL=%d\n", ok, skip, fail)
+	fmt.Printf("SELESAI dalam %s. OK=%d SKIP=%d GAGAL=%d\n", fmtDur(elapsed), ok, skip, fail)
 	if len(failed) > 0 {
 		n := len(failed)
 		if n > 20 {
