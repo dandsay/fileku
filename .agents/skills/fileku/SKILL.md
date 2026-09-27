@@ -1,7 +1,7 @@
 ---
 name: fileku
 description: >-
-  Kunci & gembok file AES-256-GCM satu-file Go (by dandsay,
+  Kunci & gembok file AES-256-GCM (by dandsay,
   https://github.com/dandsay/fileku). Bangun binary, buat kunci.key,
   kunci/buka file dan folder. Writer v2: nama acak + nama terenkripsi —
   jangan ubah parameter kripto.
@@ -22,11 +22,11 @@ bash scripts/install.sh
 Manual (tanpa script):
 
 ```bash
-GOOS=linux GOARCH=amd64 go build -o fileku fileku.go
-GOOS=windows GOARCH=amd64 go build -o fileku.exe fileku.go
+go build -o fileku .
+GOOS=windows GOARCH=amd64 go build -o fileku.exe .
 ```
 
-Syarat: Go 1.21+, tanpa modul/dependensi.
+Syarat: Go 1.21+, modul minimal, tanpa dependensi eksternal.
 
 ## Pakai
 
@@ -50,3 +50,4 @@ Alur pertama: menu `5` → passphrase (≥12 char) / dadu-kata → `kunci.key` �
 - Jangan commit: `kunci.key`, `*.key`, `*.enc`, binary, data pribadi (lihat `.gitignore`).
 - Jangan tampilkan isi `kunci.key` ke chat/log.
 - Jail: hanya path di dalam folder binary yang diproses (by design, anti-ransomware-diri-sendiri).
+- Paralel otomatis untuk file >4 MiB (≤8 worker, format sama); `FILEKU_JOBS=1` = serial.

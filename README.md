@@ -1,8 +1,8 @@
 # Fileku v1 — Kunci & Gembok (BEKU/FROZEN)
 
 > by **dandsay** — ⭐ https://github.com/dandsay/fileku
-> Satu file Go (`fileku.go`, stdlib-only) untuk mengunci (enkripsi) dan membuka
-> (dekripsi) foto/video. Satu binary = kunci + gembok. Windows & Linux.
+> Satu modul Go kecil (stdlib-only, tanpa dependensi) untuk mengunci (enkripsi)
+> dan membuka (dekripsi) foto/video. Satu binary = kunci + gembok. Windows & Linux.
 > Banner CLI menampilkan kredit + logo GitHub ASCII ini.
 
 > **STATUS: READER v1 BEKU + WRITER v2 AKTIF.** File `.enc` lama (`LCK1`)
@@ -73,12 +73,16 @@ nama+ekstensi asli pulih otomatis saat dibuka (termasuk spasi dan tanpa ekstensi
 
 ```
 bash scripts/install.sh
-# atau manual:
-GOOS=linux   GOARCH=amd64 go build -o fileku fileku.go
-GOOS=windows GOARCH=amd64 go build -o fileku.exe fileku.go
+# atau manual (modul kecil, tanpa dependensi):
+go build -o fileku .
+GOOS=windows GOARCH=amd64 go build -o fileku.exe .
 ```
 
-Butuh Go 1.21+ (tidak perlu modul, tidak perlu dependensi).
+Butuh Go 1.21+.
+
+Catatan kinerja: file >4 MiB dienkripsi/didekripsi paralel (maks 8 worker,
+urutan tulis tetap berurutan sehingga format byte-kompatibel). `FILEKU_JOBS=1`
+memaksa mode serial (irit CPU / pembanding).
 
 ## Yang TIDAK BOLEH masuk repo
 
@@ -150,16 +154,22 @@ buka(sys.argv[1], sys.argv[2], sys.argv[3])
 
 ```
 fileku/
-  fileku.go                  # satu-satunya source (stdlib-only, format BEKU)
-  README.md                  # file ini (spesifikasi + cara install)
-  LICENSE                    # MIT © 2026 dandsay
-  AGENTS.md                  # runbook buat AI: suruh install/build dari sini
-  .gitignore                 # menutup kunci, data, dan binary
+  main.go                  # titik masuk: banner, menu, alur prompt
+  crypto.go                # AES-256-GCM streaming (writer LCK2, reader LCK1+LCK2)
+  key.go                   # file kunci 32 byte + kamus dadu-kata 1091 kata
+  jail.go                  # jail folder, nama acak, sanitasi nama pulihan
+  batch.go                 # mode file tunggal & folder rekursif
+  util.go                  # progres + jeda CLI
+  go.mod                   # modul minimal (tanpa dependensi eksternal)
+  README.md                # file ini (spesifikasi + cara install)
+  LICENSE                  # MIT © 2026 dandsay
+  AGENTS.md                # runbook buat AI: suruh install/build dari sini
+  .gitignore               # menutup kunci, data, dan binary
   scripts/
-    install.sh               # pull -> pasang sekali jalan (Linux + Windows)
-    build.sh                 # build cepat + gofmt check
+    install.sh             # pull -> pasang sekali jalan (Linux + Windows)
+    build.sh               # build cepat + gofmt check
   .agents/
-    skills/fileku/SKILL.md   # skill agent: install, pakai, aturan beku
+    skills/fileku/SKILL.md # skill agent: install, pakai, aturan beku
 ```
 
 Riwayat keputusan desain: password awalnya hardcode di binary → dipindah ke

@@ -4,9 +4,11 @@
 > Kalau user menyuruh "pasang / install fileku", ikuti runbook ini tanpa bertanya lagi kecuali ada yang gagal.
 
 ## 1. Apa ini?
-- `fileku.go` = satu file Go stdlib-only untuk kunci (enkripsi) / buka (dekripsi) file via AES-256-GCM.
+- Modul Go kecil (`main/crypto/key/jail/batch/util.go`, satu `package main`,
+  stdlib-only, tanpa dependensi) untuk kunci (enkripsi) / buka (dekripsi) file via AES-256-GCM.
 - Writer aktif **v2 (`LCK2`)**: output nama acak heks + nama asli (termasuk ekstensi) terenkripsi di header. Reader ganda: `LCK1` lama tetap dibuka.
 - **BEKU**: `salt 16B`, `PBKDF2 200k -> 100k`, `chunk 1 MiB`, `nonce 12B`, `keyDeriveSalt=locker-kunci-v1`. **JANGAN** ubah parameter kripto.
+- File >4 MiB otomatis paralel (≤8 worker, output byte-kompatibel); `FILEKU_JOBS=1` memaksa serial.
 - Yang BOLEH diubah: banner/kredit CLI, README, script, docs.
 
 ## 2. Install sekali jalan (setelah `git pull` / `git clone`)
@@ -15,12 +17,12 @@ git clone https://github.com/dandsay/fileku.git
 cd fileku
 bash scripts/install.sh
 # atau manual:
-# GOOS=linux GOARCH=amd64 go build -o fileku fileku.go
-# GOOS=windows GOARCH=amd64 go build -o fileku.exe fileku.go
+# go build -o fileku .
+# GOOS=windows GOARCH=amd64 go build -o fileku.exe .
 ./fileku --version
 ```
 
-- Butuh Go 1.21+ (`go version`). Tanpa modul, tanpa dependensi.
+- Butuh Go 1.21+ (`go version`). Modul minimal (`go.mod`), tanpa dependensi eksternal.
 - Jangan commit hasil build (`fileku`, `fileku.exe`), kunci (`*.key`, `kunci.key`), atau data (`*.enc`, `*.jpg`, `*.mp4`, dll). Sudah ditutup `.gitignore`.
 
 ## 3. Cara pakai (untuk demo ke user)
@@ -38,9 +40,9 @@ bash scripts/install.sh
 ## 4. Aturan aman untuk agent
 1. Jangan pernah `cat` / menyebar isi `kunci.key` ke chat/log.
 2. Jangan commit `kunci.key`, `*.enc`, atau data pribadi.
-3. Jangan ubah konstanta beku di `fileku.go` (`saltSize`, `nonceSize`, `chunkSize`, `pbkdfIter`, `keyDeriveSalt`, `keyDeriveIter`, `keySize`, logika header v1/v2).
+3. Jangan ubah konstanta beku di `crypto.go` (`saltSize`, `nonceSize`, `chunkSize`, `pbkdfIter`, `keyDeriveSalt`, `keyDeriveIter`, `keySize`, logika header v1/v2).
 4. Kredit `dandsay + https://github.com/dandsay/fileku` wajib dipertahankan di banner CLI, README, dan SKILL.
-5. Setelah edit `fileku.go`, jalankan `gofmt -l .` dan `bash scripts/build.sh` bila Go tersedia.
+5. Setelah edit `*.go`, jalankan `gofmt -l .` dan `bash scripts/build.sh` bila Go tersedia.
 
 ## 5. Verifikasi cepat
 ```bash

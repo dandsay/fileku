@@ -13,14 +13,14 @@ fi
 go version
 
 echo "-> build Linux..."
-GOOS=linux GOARCH=amd64 go build -o fileku fileku.go
+go build -o fileku .
 chmod +x fileku
 
 echo "-> build Windows..."
-GOOS=windows GOARCH=amd64 go build -o fileku.exe fileku.go
+GOOS=windows GOARCH=amd64 go build -o fileku.exe .
 
 echo "-> cek versi..."
-./fileku --version || go run fileku.go --version
+./fileku --version || go run . --version
 
 echo
 echo "SELESAI. Pakai: ./fileku  (menu)  |  ./fileku --help"
