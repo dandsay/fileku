@@ -3,7 +3,8 @@ name: fileku
 description: >-
   Kunci & gembok file AES-256-GCM satu-file Go (by dandsay,
   https://github.com/dandsay/fileku). Bangun binary, buat kunci.key,
-  kunci/buka file dan folder. Format v1 BEKU — jangan ubah parameter kripto.
+  kunci/buka file dan folder. Writer v2: nama acak + nama terenkripsi —
+  jangan ubah parameter kripto.
 ---
 
 # Fileku Skill (https://github.com/dandsay/fileku)
@@ -41,7 +42,9 @@ Alur pertama: menu `5` → passphrase (≥12 char) / dadu-kata → `kunci.key` �
 
 ## Aturan beku (jangan dilanggar)
 
-- Jangan ubah: `magic=LCK1`, `saltSize=16`, `nonceSize=12`, `chunkSize=1MiB`,
+- Writer `LCK2`: output heks acak 16 byte + header nama terenkripsi
+  (`nonce 12B` + `len uint16 BE` + `ct(basename)`). Reader menerima `LCK1` + `LCK2`.
+- Jangan ubah: `saltSize=16`, `nonceSize=12`, `chunkSize=1MiB`,
   `pbkdfIter=100000`, `keyDeriveSalt=locker-kunci-v1`, `keyDeriveIter=200000`, `keySize=32`.
 - Boleh ubah: banner CLI, README, script, docs.
 - Jangan commit: `kunci.key`, `*.key`, `*.enc`, binary, data pribadi (lihat `.gitignore`).

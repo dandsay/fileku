@@ -21,9 +21,14 @@
 //	GOOS=windows GOARCH=amd64 go build -o fileku.exe fileku.go
 //	GOOS=linux   GOARCH=amd64 go build -o fileku fileku.go
 //
-// Format file .enc:
+// Format file .enc (writer v2, reader v1+v2):
 //
-//	[4 byte magic "LCK1"][16 byte salt][chunk*]
+//	v1 (baca saja): [4 byte magic "LCK1"][16 byte salt][chunk*]
+//	v2 (tulis baru) : [4 byte magic "LCK2"][16 byte salt]
+//	                  [12 byte nonce nama][2 byte BE len ct nama][ct nama]
+//	                  [chunk*]
+//	nama = basename lengkap termasuk ekstensi, terenkripsi AES-256-GCM
+//	dengan kunci file yang sama. Output v2 bernama heks acak.
 //	chunk = [12 byte nonce][4 byte BE len ciphertext][ciphertext]
 //	Kunci per-file = PBKDF2-HMAC-SHA256(password, salt, 100_000x, 32 byte)
 //	Tiap chunk 1 MiB dienkripsi AES-256-GCM dengan nonce acak.
@@ -31,13 +36,13 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
@@ -49,12 +54,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
-// === FORMAT v1 — BEKU (FROZEN) ===
-// DILARANG mengubah parameter di bawah setelah ada file .enc beredar:
-// magic, saltSize, nonceSize, chunkSize, pbkdfIter, keyDeriveSalt,
+// === FORMAT — v1 READER BEKU, v2 WRITER AKTIF ===
+// DILARANG mengubah parameter kripto setelah ada file .enc beredar:
+// saltSize, nonceSize, chunkSize, pbkdfIter, keyDeriveSalt,
 // keyDeriveIter, keySize. Satu byte berubah = semua .enc lama mati.
+// v1 (LCK1) hanya dibaca; v2 (LCK2) menambah header nama terenkripsi.
 // Spesifikasi rekonstruksi lengkap: README.md.
 const defaultKeyName = "kunci.key"
 
@@ -215,11 +222,15 @@ var kamusKata = []string{
 }
 
 const (
-	magic     = "LCK1"
+	magic     = "LCK1" // reader v1 (beku, tetap didukung)
+	magicV1   = "LCK1"
+	magicV2   = "LCK2" // writer aktif: nama file terenkripsi + output acak
 	saltSize  = 16
 	nonceSize = 12
 	chunkSize = 1 << 20 // 1 MiB per chunk -> hemat RAM untuk file ratusan MB
 	pbkdfIter = 100000
+	// Batas nama file (plaintext UTF-8, termasuk ekstensi) untuk header v2.
+	nameMaxPlain = 1024
 )
 
 // Identitas publik + kredit (BOLEH diubah, TIDAK memengaruhi format .enc beku).
@@ -643,13 +654,25 @@ func runSingleMode(path string, fi os.FileInfo, reader *bufio.Reader, modeArg, b
 			fmt.Println("DITOLAK: file sudah .enc — tidak boleh double-enkripsi. Pilih Buka untuk mendekripsinya.")
 			return false
 		}
-		outPath = path + ".enc"
+		// v2: output nama acak, nama asli tersimpan terenkripsi di header.
+		rp, rerr := randomEncPath(filepath.Dir(path))
+		if rerr != nil {
+			fmt.Println("GAGAL membuat nama acak: " + rerr.Error())
+			return false
+		}
+		outPath = rp
 	} else {
 		if !isEncFile(path) {
 			fmt.Println("DITOLAK: bukan file .enc — tidak bisa dibuka. Batal.")
 			return false
 		}
-		outPath = stripEnc(path)
+		// v2: nama asli dari header terenkripsi; v1: strip .enc.
+		pp, _, perr := peekUnlockTarget(path, key)
+		if perr != nil {
+			fmt.Println("GAGAL membaca header: " + perr.Error())
+			return false
+		}
+		outPath = pp
 	}
 	// Pertahanan lapis-2: output tidak boleh keluar dari jail.
 	if !withinJail(base, outPath) {
@@ -799,7 +822,52 @@ func printQuickDetector(base string) {
 	fmt.Println()
 }
 
-// ---------- enkripsi streaming ----------
+// ---------- enkripsi streaming (writer v2, reader v1+v2) ----------
+
+// deriveFileGCM menurunkan kunci file dari kunci master + salt per-file.
+func deriveFileGCM(master, salt []byte) (cipher.AEAD, error) {
+	fk := pbkdf2(master, salt, pbkdfIter, 32)
+	block, err := aes.NewCipher(fk)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+// randomEncPath membuat nama output acak heks (16 byte) + .enc di dir yang sama.
+// Mengembalikan path yang dijamin belum ada (maks 10x coba).
+func randomEncPath(dir string) (string, error) {
+	for i := 0; i < 10; i++ {
+		b := make([]byte, 16)
+		if _, err := rand.Read(b); err != nil {
+			return "", err
+		}
+		p := filepath.Join(dir, hex.EncodeToString(b)+".enc")
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("gagal membuat nama acak (tabrakan berulang)")
+}
+
+// sanitizeRestoreName memvalidasi nama hasil dekripsi: basename saja,
+// tolak kosong, path separator, "..", dan non-UTF8. Ekstensi ikut terpulihkan
+// karena yang disimpan adalah basename lengkap.
+func sanitizeRestoreName(s string) (string, bool) {
+	if s == "" || len(s) > nameMaxPlain || !utf8.ValidString(s) {
+		return "", false
+	}
+	if s == "." || s == ".." {
+		return "", false
+	}
+	if strings.ContainsRune(s, '/') || strings.ContainsRune(s, '\\') || strings.Contains(s, "..") {
+		return "", false
+	}
+	if filepath.Base(s) != s {
+		return "", false
+	}
+	return s, true
+}
 
 func encryptFile(inPath, outPath string, totalSize int64, key []byte) error {
 	in, err := os.Open(inPath)
@@ -819,20 +887,41 @@ func encryptFile(inPath, outPath string, totalSize int64, key []byte) error {
 	if _, err := rand.Read(salt); err != nil {
 		return fmt.Errorf("gagal buat salt: %w", err)
 	}
-	key = pbkdf2(key, salt, pbkdfIter, 32)
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return err
-	}
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := deriveFileGCM(key, salt)
 	if err != nil {
 		return err
 	}
 
-	if _, err := io.WriteString(out, magic); err != nil {
+	// Header v2: [LCK2][salt 16B][nonce 12B][len nama uint16 BE][ct(nama)].
+	// Nama asli = basename lengkap (termasuk ekstensi), terenkripsi AES-GCM.
+	baseName := filepath.Base(inPath)
+	nameRaw := []byte(baseName)
+	if len(nameRaw) == 0 || len(nameRaw) > nameMaxPlain || !utf8.Valid(nameRaw) {
+		return fmt.Errorf("nama file tidak valid untuk header v2")
+	}
+	if _, err := io.WriteString(out, magicV2); err != nil {
 		return err
 	}
 	if _, err := out.Write(salt); err != nil {
+		return err
+	}
+	nameNonce := make([]byte, nonceSize)
+	if _, err := rand.Read(nameNonce); err != nil {
+		return fmt.Errorf("gagal buat nonce nama: %w", err)
+	}
+	nameCT := gcm.Seal(nil, nameNonce, nameRaw, nil)
+	if len(nameCT) > 0xFFFF {
+		return fmt.Errorf("nama file terlalu panjang untuk header v2")
+	}
+	if _, err := out.Write(nameNonce); err != nil {
+		return err
+	}
+	var nameLenBuf [2]byte
+	binary.BigEndian.PutUint16(nameLenBuf[:], uint16(len(nameCT)))
+	if _, err := out.Write(nameLenBuf[:]); err != nil {
+		return err
+	}
+	if _, err := out.Write(nameCT); err != nil {
 		return err
 	}
 
@@ -874,31 +963,122 @@ func encryptFile(inPath, outPath string, totalSize int64, key []byte) error {
 }
 
 func decryptFile(inPath, outPath string, totalSize int64, key []byte) error {
+	return decryptFileAuto(inPath, outPath, totalSize, key)
+}
+
+// peekUnlockTarget membaca header saja untuk tahu nama output tanpa
+// mendekripsi seluruh isi. v1 -> strip .enc, v2 -> nama terdekripsi di header.
+func peekUnlockTarget(encPath string, key []byte) (outPath string, isV2 bool, err error) {
+	in, err := os.Open(encPath)
+	if err != nil {
+		return "", false, err
+	}
+	defer in.Close()
+	magicBuf := make([]byte, 4)
+	if _, err := io.ReadFull(in, magicBuf); err != nil {
+		return "", false, fmt.Errorf("file rusak / bukan file fileku: %w", err)
+	}
+	switch string(magicBuf) {
+	case magicV1:
+		return stripEnc(encPath), false, nil
+	case magicV2:
+		salt := make([]byte, saltSize)
+		if _, err := io.ReadFull(in, salt); err != nil {
+			return "", true, fmt.Errorf("header salt rusak: %w", err)
+		}
+		gcm, err := deriveFileGCM(key, salt)
+		if err != nil {
+			return "", true, err
+		}
+		nonce := make([]byte, nonceSize)
+		if _, err := io.ReadFull(in, nonce); err != nil {
+			return "", true, fmt.Errorf("header nama rusak: %w", err)
+		}
+		var lb [2]byte
+		if _, err := io.ReadFull(in, lb[:]); err != nil {
+			return "", true, fmt.Errorf("header panjang nama rusak: %w", err)
+		}
+		n := int(binary.BigEndian.Uint16(lb[:]))
+		if n < 16+1 || n > nameMaxPlain+32 {
+			return "", true, fmt.Errorf("panjang nama tidak wajar (%d)", n)
+		}
+		ct := make([]byte, n)
+		if _, err := io.ReadFull(in, ct); err != nil {
+			return "", true, fmt.Errorf("header nama terpotong: %w", err)
+		}
+		pt, err := gcm.Open(nil, nonce, ct, nil)
+		if err != nil {
+			return "", true, fmt.Errorf("gagal dekripsi nama (kunci salah / file rusak)")
+		}
+		name, ok := sanitizeRestoreName(string(pt))
+		if !ok {
+			return "", true, fmt.Errorf("nama di header tidak valid")
+		}
+		return filepath.Join(filepath.Dir(encPath), name), true, nil
+	default:
+		return "", false, fmt.Errorf("file ini bukan hasil fileku (magic salah)")
+	}
+}
+
+func decryptFileAuto(inPath, outPathHint string, totalSize int64, key []byte) error {
 	in, err := os.Open(inPath)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	magicBuf := make([]byte, len(magic))
+	magicBuf := make([]byte, 4)
 	if _, err := io.ReadFull(in, magicBuf); err != nil {
 		return fmt.Errorf("file rusak / bukan file fileku: %w", err)
 	}
-	if !bytes.Equal(magicBuf, []byte(magic)) {
+	magicStr := string(magicBuf)
+	if magicStr != magicV1 && magicStr != magicV2 {
 		return fmt.Errorf("file ini bukan hasil fileku (magic salah)")
 	}
 	salt := make([]byte, saltSize)
 	if _, err := io.ReadFull(in, salt); err != nil {
 		return fmt.Errorf("header salt rusak: %w", err)
 	}
-	key = pbkdf2(key, salt, pbkdfIter, 32)
-	block, err := aes.NewCipher(key)
+	gcm, err := deriveFileGCM(key, salt)
 	if err != nil {
 		return err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return err
+
+	outPath := outPathHint
+	if magicStr == magicV2 {
+		// Baca + dekripsi nama asli dari header.
+		nonce := make([]byte, nonceSize)
+		if _, err := io.ReadFull(in, nonce); err != nil {
+			return fmt.Errorf("header nama rusak: %w", err)
+		}
+		var lb [2]byte
+		if _, err := io.ReadFull(in, lb[:]); err != nil {
+			return fmt.Errorf("header panjang nama rusak: %w", err)
+		}
+		n := int(binary.BigEndian.Uint16(lb[:]))
+		if n < 16+1 || n > nameMaxPlain+32 {
+			return fmt.Errorf("panjang nama tidak wajar (%d)", n)
+		}
+		ct := make([]byte, n)
+		if _, err := io.ReadFull(in, ct); err != nil {
+			return fmt.Errorf("header nama terpotong: %w", err)
+		}
+		pt, err := gcm.Open(nil, nonce, ct, nil)
+		if err != nil {
+			return fmt.Errorf("gagal dekripsi (password salah / file rusak / dimodifikasi)")
+		}
+		name, ok := sanitizeRestoreName(string(pt))
+		if !ok {
+			return fmt.Errorf("nama di header tidak valid")
+		}
+		candidate := filepath.Join(filepath.Dir(inPath), name)
+		if !withinJail(resolvePath(filepath.Dir(inPath)), resolvePath(candidate)) {
+			return fmt.Errorf("nama di header keluar dari folder (ditolak)")
+		}
+		// outPathHint dari peek diutamakan bila sama; selain itu pakai header.
+		if outPathHint == "" || filepath.Clean(outPathHint) != filepath.Clean(candidate) {
+			outPath = candidate
+		}
 	}
 
 	out, err := os.Create(outPath)
@@ -1130,11 +1310,12 @@ func runBatchMode(root string, reader *bufio.Reader, modeArg, base string, key [
 		var ok, skip, fail int
 		var failed []string
 		for i, c := range cands {
-			out := c.path + ".enc"
 			fmt.Printf("[%d/%d] %s\n", i+1, len(cands), c.path)
-			if _, err := os.Stat(out); err == nil {
-				fmt.Println("  SKIP (output .enc sudah ada)")
-				skip++
+			out, rerr := randomEncPath(filepath.Dir(c.path))
+			if rerr != nil {
+				fmt.Printf("  GAGAL: %v\n", rerr)
+				fail++
+				failed = append(failed, c.path)
 				continue
 			}
 			if err := encryptFile(c.path, out, c.size, key); err != nil {
@@ -1170,12 +1351,18 @@ func runBatchMode(root string, reader *bufio.Reader, modeArg, base string, key [
 	var ok, skip, fail int
 	var failed []string
 	for i, p := range enc {
-		out := stripEnc(p)
 		var sz int64
 		if fi, serr := os.Stat(p); serr == nil {
 			sz = fi.Size()
 		}
 		fmt.Printf("[%d/%d] %s\n", i+1, len(enc), p)
+		out, _, perr := peekUnlockTarget(p, key)
+		if perr != nil {
+			fmt.Printf("  GAGAL baca header: %v\n", perr)
+			fail++
+			failed = append(failed, p)
+			continue
+		}
 		if _, err := os.Stat(out); err == nil {
 			fmt.Printf("  SKIP (hasil %s sudah ada)\n", out)
 			skip++

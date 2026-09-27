@@ -5,8 +5,10 @@
 > (dekripsi) foto/video. Satu binary = kunci + gembok. Windows & Linux.
 > Banner CLI menampilkan kredit + logo GitHub ASCII ini.
 
-> **STATUS: FORMAT v1 BEKU.** Parameter di bawah DILARANG diubah setelah ada
-> file `.enc` beredar. Satu byte berubah = semua `.enc` lama tidak bisa dibuka.
+> **STATUS: READER v1 BEKU + WRITER v2 AKTIF.** File `.enc` lama (`LCK1`)
+> tetap bisa dibuka. File baru ditulis sebagai `LCK2`: nama file+ekstensi
+> asli disimpan **terenkripsi (AES-GCM)** di header, nama output **acak heks**.
+> Satu byte parameter kripto berubah = file lama tidak bisa dibuka.
 > README ini adalah spesifikasi rekonstruksi: selama memegang **passphrase**,
 > program ini (atau implementasi ulang dari spec ini) bisa membuka kembali
 > semua file.
@@ -54,6 +56,9 @@ Mode non-interaktif (script):
 ./fileku <path-file-atau-folder> [lock|unlock] [path-kunci]
 ```
 
+Catatan v2: hasil kunci bernama **acak** (`<32 hex>.enc`) di folder yang sama;
+nama+ekstensi asli pulih otomatis saat dibuka (termasuk spasi dan tanpa ekstensi).
+
 ## Pengaman (diringkas dari implementasi)
 
 1. **Jail folder software.** Hanya path DI DALAM folder tempat binary berada
@@ -80,9 +85,17 @@ Butuh Go 1.21+ (tidak perlu modul, tidak perlu dependensi).
 `kunci.key`, `*.key`, `*.enc`, data pribadi, dan binary hasil build.
 Sudah ditutup via `.gitignore`. **Bocornya `kunci.key` = bocornya semua file.**
 
-## Spesifikasi format v1 (BEKU)
+## Spesifikasi format (v1 reader beku, v2 writer aktif)
 
-Semua bilangan bulat = big-endian. Semua byte dibaca/ditulis apa adanya.
+v1 (`LCK1`, hanya dibaca): `[magic LCK1][salt 16B][chunk*]` sesuai tabel 2–8
+di bawah. v2 (`LCK2`, ditulis baru): header nama terenkripsi disisipkan
+setelah salt, lalu chunk identik dengan v1.
+
+| # | Komponen | Nilai |
+|---|----------|-------|
+| 0 | Magic v2 | 4 byte ASCII `LCK2` (writer). Reader menerima `LCK1` dan `LCK2` |
+| 0b | Header nama v2 | `nonce 12B acak` + `panjang_ct uint16 BE` + `ct(nama)`; `nama` = basename UTF-8 lengkap **termasuk ekstensi** (maks 1024 byte), dienkripsi AES-256-GCM dengan kunci file yang sama; output `.enc` = heks acak 16 byte |
+| 1 | Kunci dari passphrase | `PBKDF2-HMAC-SHA256(passphrase_utf8, salt="locker-kunci-v1", iter=200000, dkLen=32)` |
 
 | # | Komponen | Nilai beku |
 |---|----------|------------|
@@ -95,6 +108,8 @@ Semua bilangan bulat = big-endian. Semua byte dibaca/ditulis apa adanya.
 | 7 | Cipher | **AES-256-GCM**, nonce 12 byte, tanpa additional data |
 | 8 | Output kunci | input + `.enc`. Output buka = input tanpa `.enc` |
 | 9 | Kamus dadu-kata | 1091 kata (a-z, 3–12 huruf, unik, di-`init`-validasi). Passphrase = kata digabung `-`. Minimal kata = `ceil(128 / log2(1091))` = **13 kata (±131 bit)** |
+
+Semua bilangan bulat = big-endian. Semua byte dibaca/ditulis apa adanya.
 
 Catatan rekonstruksi yang kritis:
 
